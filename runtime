@@ -1,0 +1,45 @@
+FROM debian:bookworm-slim
+
+ARG USERNAME=agent
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    bubblewrap \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    ncurses-term \
+    openssh-client \
+    ripgrep \
+    gh \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
+    && useradd \
+        --uid "${USER_UID}" \
+        --gid "${USER_GID}" \
+        --create-home \
+        --shell /bin/bash \
+        "${USERNAME}"
+
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | sh \
+    && CODEX_PACKAGE_DIR="$(dirname "$(dirname "$(readlink -f /root/.local/bin/codex)")")" \
+    && mkdir -p /opt/codex \
+    && cp -a "${CODEX_PACKAGE_DIR}/." /opt/codex/ \
+    && ln -s /opt/codex/bin/codex /usr/local/bin/codex \
+    && ln -s /opt/codex/bin/codex-code-mode-host /usr/local/bin/codex-code-mode-host \
+    && test -x /usr/local/bin/codex-code-mode-host \
+    && rm -rf /root/.local
+
+RUN mkdir -p /workspace \
+    && chown "${USERNAME}:${USERNAME}" /workspace
+
+USER ${USERNAME}
+
+ENV HOME=/home/${USERNAME}
+WORKDIR /workspace
+
+CMD ["codex"]
