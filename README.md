@@ -32,14 +32,20 @@ Log in to Codex on the host before launching an agent. The plugin mounts the hos
 
 Use one tmux session as the control plane for local agents. Each agent runs in its own tmux session, Git worktree, and Podman container.
 
-An agent is temporary. When its session ends, its container, worktree, and branch are deleted. Anything worth keeping must be integrated or exported first.
-
 ```text
 tmux: fleet
 ├── agent 0
 ├── agent 1
 └── agent 2
 ```
+
+An agent is temporary, it's resources -- container, worktree, and branch -- are normally removed when their tmux session ends. To retry cleanup after a crash or host restart, run:
+
+```sh
+scripts/cleanup.sh
+```
+
+The command only removes resources recorded in `$worktree_root/.state/`
 
 ## Configuration
 

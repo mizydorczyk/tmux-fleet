@@ -2,6 +2,8 @@
 
 set -u
 
+umask 077
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo=${1:?missing repository path}
 worktree=${2:?missing worktree path}
@@ -10,8 +12,7 @@ image=${4:?missing image name}
 codex_home=${5:?missing Codex home path}
 container=${6:?missing container name}
 client_tty=${7:-}
-worktree_attempted=0
-container_attempted=0
+manifest_written=0
 
 short_path() {
   case "$1" in
@@ -24,65 +25,17 @@ display_repo=$(short_path "$repo")
 display_worktree=$(short_path "$worktree")
 cleanup_reason=normal
 . "$script_dir/printing.sh"
+. "$script_dir/state.sh"
 
 fail() {
   print "$1"
   exit 1
 }
 
-worktree_registered() {
-  git -C "$repo" worktree list --porcelain \
-    | grep -Fqx "worktree $worktree"
-}
-
-remove_git_resources() {
-  worktree_removed=0
-  branch_removed=0
-
-  if worktree_registered; then
-    print "Removing worktree '$worktree'..." "Removing worktree '$display_worktree'..."
-    if ! git -C "$repo" worktree remove --force "$worktree"; then
-      print "Could not remove worktree: $worktree. The branch was retained." "Could not remove worktree: $display_worktree. The branch was retained."
-      notify "Could not remove worktree '$display_worktree'. The branch was retained."
-      return 1
-    fi
-    worktree_removed=1
-  elif [ -e "$worktree" ] || [ -L "$worktree" ]; then
-    print "Removing incomplete worktree '$worktree'..." "Removing incomplete worktree '$display_worktree'..."
-    if ! rm -rf -- "$worktree"; then
-      print "Could not remove incomplete worktree: $worktree." "Could not remove incomplete worktree: $display_worktree."
-      notify "Could not remove incomplete worktree '$display_worktree'."
-      return 1
-    fi
-    worktree_removed=1
-  fi
-
-  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
-    print "Deleting branch '$branch'..."
-    if ! git -C "$repo" branch -D --quiet -- "$branch"; then
-      print "Could not delete branch '$branch'."
-      notify "Could not delete branch '$branch'."
-      return 1
-    fi
-    branch_removed=1
-  fi
-
-  if [ "$worktree_removed" -eq 1 ] && [ "$branch_removed" -eq 1 ]; then
-    print "Removed worktree and branch '$branch'."
-  elif [ "$worktree_removed" -eq 1 ]; then
-    print "Removed worktree '$worktree'." "Removed worktree '$display_worktree'."
-  elif [ "$branch_removed" -eq 1 ]; then
-    print "Removed branch '$branch'."
-  fi
-  return 0
-}
-
 validate_environment() {
-  command -v podman >/dev/null 2>&1 \
-    || fail 'Podman is not installed or not on PATH.'
+  command -v podman >/dev/null 2>&1 || fail 'Podman is not installed or not on PATH.'
   if ! podman image exists "$image" >/dev/null 2>&1; then
-    podman info >/dev/null 2>&1 \
-      || fail 'Podman is not running. Start its machine and try again.'
+    podman info >/dev/null 2>&1 || fail 'Podman is not running. Start its machine and try again.'
     fail "Container image '$image' does not exist. Build it before launching."
   fi
   [ -d "$codex_home" ] \
@@ -97,11 +50,27 @@ validate_environment() {
 
 create_worktree() {
   worktree_root=$(dirname "$worktree")
-  mkdir -p "$worktree_root" \
-    || fail "Could not create worktree root '$worktree_root'."
-  worktree_attempted=1
-  git -C "$repo" worktree add --quiet -b "$branch" "$worktree" \
-    || fail "Could not create worktree '$display_worktree'."
+  mkdir -p "$worktree_root" || fail "Could not create worktree root '$worktree_root'."
+  git -C "$repo" worktree add --quiet -b "$branch" "$worktree" || fail "Could not create worktree '$display_worktree'."
+}
+
+create_manifest() {
+  resource=${worktree##*/}
+  agent=${branch#agent/}
+  [ "$branch" = "agent/$agent" ] && [ -n "$agent" ] \
+    || fail "Branch '$branch' is not a valid agent branch."
+  [ "$container" = "tmux-fleet-$resource" ] \
+    || fail "Container '$container' does not match resource '$resource'."
+
+  fleet_resolve_repository_identity "$repo" || fail 'Could not resolve the repository identity.'
+  git_common_dir=$fleet_resolved_common_dir
+  repo_id=$fleet_resolved_repo_id
+  manifest="$(dirname "$worktree")/.state/$resource"
+
+  fleet_write_manifest "$manifest" "$agent" "$resource" "$repo" \
+    "$git_common_dir" "$repo_id" "$resource" "$container" "$worktree" "$branch" \
+    || fail "Could not write agent manifest '$manifest'."
+  manifest_written=1
 }
 
 run_container() {
@@ -111,10 +80,12 @@ run_container() {
     set -- "$@" --env "COLORTERM=$COLORTERM"
   fi
 
-  container_attempted=1
   podman run --rm --interactive --tty \
     "$@" \
     --name "$container" \
+    --label io.tmux-fleet.managed=true \
+    --label "io.tmux-fleet.resource=$resource" \
+    --label "io.tmux-fleet.repo-id=$repo_id" \
     --userns=keep-id:uid=1000,gid=1000 \
     --volume "$worktree:/workspace:rw" \
     --volume "$codex_home:/home/agent/.codex:rw" \
@@ -155,23 +126,11 @@ pause_for_key() {
 
 cleanup() {
   cleanup_status=$?
-  remove_git=1
   trap - EXIT
   trap '' HUP INT TERM
-  if [ "$container_attempted" -eq 1 ]; then
-    # A killed pane can leave Podman's container running. Stop it before removing files it can still write.
-    print "Stopping/removing container '$container'..."
-    if ! podman rm --force --ignore "$container"; then
-      print "Container removal failed. The worktree and branch were retained."
-      notify "Container removal failed. The worktree and branch were retained."
-      cleanup_status=1
-      remove_git=0
-    fi
-  fi
-  if [ "$remove_git" -eq 1 ] \
-    && [ "$worktree_attempted" -eq 1 ] \
-    && ! remove_git_resources; then
+  if [ "$manifest_written" -eq 1 ] && ! fleet_cleanup_manifest "$manifest" yes; then
     cleanup_status=1
+    notify "Cleanup failed for '$resource'. Run scripts/cleanup.sh to retry."
   fi
   print "Agent session finished."
   [ "$cleanup_reason" = normal ] && pause_for_key
@@ -182,6 +141,7 @@ main() {
   print "Repository: $display_repo."
   print "Checking container runtime..."
   validate_environment
+  create_manifest
   print "Preparing worktree '$display_worktree'..."
   create_worktree
   print "Created branch: $branch."
