@@ -29,8 +29,8 @@ shell_quote() {
 
 rollback() {
   if [ "$session_attempted" -eq 1 ] \
-    && tmux has-session -t "$tmux_session" 2>/dev/null; then
-    if ! tmux kill-session -t "$tmux_session" 2>/dev/null; then
+    && tmux has-session -t "=$tmux_session" 2>/dev/null; then
+    if ! tmux kill-session -t "=$tmux_session" 2>/dev/null; then
       notify "Could not stop incomplete session '$tmux_session'."
     fi
   fi
@@ -59,9 +59,27 @@ validate_request() {
 resolve_repository() {
   repo=$(git -C "$pane_dir" rev-parse --show-toplevel 2>/dev/null) \
     || fail 'the active pane is not inside a Git repository'
+  repo=$(CDPATH= cd -- "$repo" && pwd -P) \
+    || fail 'could not resolve the repository path'
   repo_name=$(basename "$repo")
-  safe_repo_name=$(printf '%s' "$repo_name" | tr -cs '[:alnum:]_-' '-')
+
+  git_common_dir=$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null) \
+    || fail 'could not resolve the Git common directory'
+  case "$git_common_dir" in
+    /*) ;;
+    *) git_common_dir="$repo/$git_common_dir" ;;
+  esac
+  git_common_dir=$(CDPATH= cd -- "$git_common_dir" && pwd -P) \
+    || fail 'could not resolve the Git common directory path'
+  repo_id=$(printf '%s' "$git_common_dir" | git -C "$repo" hash-object --stdin 2>/dev/null) \
+    || fail 'could not generate the repository identifier'
+  repo_id=$(printf '%s' "$repo_id" | cut -c 1-12)
+  [ "${#repo_id}" -eq 12 ] \
+    || fail 'Git returned an invalid repository identifier'
+
+  safe_repo_name=$(printf '%s' "$repo_name" | LC_ALL=C tr -cs '[:alnum:]_-' '-')
   safe_repo_name=${safe_repo_name#-}
+  safe_repo_name=${safe_repo_name%-}
   [ -n "$safe_repo_name" ] || safe_repo_name=repository
 }
 
@@ -74,13 +92,14 @@ resolve_configuration() {
   [ -n "$worktree_root" ] || worktree_root=${HOME}/.tmux-fleet
 
   branch="agent/$agent_name"
-  worktree="$worktree_root/$repo_name-$agent_name"
-  tmux_session="$safe_repo_name-$agent_name"
-  container="tmux-fleet-$safe_repo_name-$agent_name"
+  resource_name="$safe_repo_name-$agent_name-$repo_id"
+  worktree="$worktree_root/$resource_name"
+  tmux_session=$resource_name
+  container="tmux-fleet-$resource_name"
 }
 
 validate_session() {
-  tmux has-session -t "$tmux_session" 2>/dev/null \
+  tmux has-session -t "=$tmux_session" 2>/dev/null \
     && fail "Agent session '$tmux_session' already exists. Switch to it or choose another name."
   return 0
 }
@@ -102,12 +121,12 @@ configure_session() {
   tmux set-window-option -t "=$tmux_session:" automatic-rename off \
     && tmux set-window-option -t "=$tmux_session:" allow-rename off \
     && tmux set-window-option -t "=$tmux_session:" remain-on-exit off \
-    && tmux set-option -t "$tmux_session" detach-on-destroy off \
+    && tmux set-option -t "=$tmux_session" detach-on-destroy off \
     || fail "could not configure tmux session '$tmux_session'"
 }
 
 switch_to_session() {
-  tmux switch-client -c "$client_tty" -t "$tmux_session" \
+  tmux switch-client -c "$client_tty" -t "=$tmux_session" \
     || fail "could not switch client '$client_tty' to session '$tmux_session'"
 }
 
