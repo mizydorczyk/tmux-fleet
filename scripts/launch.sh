@@ -70,8 +70,8 @@ resolve_repository() {
 resolve_configuration() {
   image=$(tmux_option '@tmux-fleet-image')
   [ -n "$image" ] || image=runtime:latest
-  codex_home=$(tmux_option '@tmux-fleet-codex-home')
-  [ -n "$codex_home" ] || codex_home=${HOME}/.codex
+  codex_auth_home=$(tmux_option '@tmux-fleet-codex-home')
+  [ -n "$codex_auth_home" ] || codex_auth_home=${HOME}/.codex
   worktree_root=$(tmux_option '@tmux-fleet-worktree-root')
   [ -n "$worktree_root" ] || worktree_root=${HOME}/.tmux-fleet
   mkdir -p "$worktree_root" || fail "could not create worktree root '$worktree_root'"
@@ -80,6 +80,7 @@ resolve_configuration() {
   branch="agent/$agent_name"
   resource_name="$safe_repo_name-$agent_name-$repo_id"
   worktree="$worktree_root/$resource_name"
+  codex_home="$worktree_root/.codex/$resource_name"
   tmux_session=$resource_name
   container="tmux-fleet-$resource_name"
   manifest="$worktree_root/.state/$resource_name"
@@ -97,7 +98,7 @@ validate_session() {
 
 build_session_command() {
   session_command=$(shell_quote "$plugin_dir/scripts/session.sh")
-  for argument in "$repo" "$worktree" "$branch" "$image" "$codex_home" "$container" "$client_tty"; do
+  for argument in "$repo" "$worktree" "$branch" "$image" "$codex_auth_home" "$codex_home" "$container" "$client_tty"; do
     session_command="$session_command $(shell_quote "$argument")"
   done
 }

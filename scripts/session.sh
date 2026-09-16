@@ -9,9 +9,10 @@ repo=${1:?missing repository path}
 worktree=${2:?missing worktree path}
 branch=${3:?missing branch name}
 image=${4:?missing image name}
-codex_home=${5:?missing Codex home path}
-container=${6:?missing container name}
-client_tty=${7:-}
+codex_auth_home=${5:?missing Codex authentication home path}
+codex_home=${6:?missing Codex home path}
+container=${7:?missing container name}
+client_tty=${8:-}
 manifest_written=0
 
 short_path() {
@@ -38,14 +39,21 @@ validate_environment() {
     podman info >/dev/null 2>&1 || fail 'Podman is not running. Start its machine and try again.'
     fail "Container image '$image' does not exist. Build it before launching."
   fi
-  [ -d "$codex_home" ] \
-    || fail "Codex config directory '$codex_home' does not exist."
-  { [ ! -e "$worktree" ] && [ ! -L "$worktree" ]; } \
-    || fail "Worktree '$display_worktree' already exists. Choose another name."
+  [ -d "$codex_auth_home" ] || fail "Codex authentication directory '$codex_auth_home' does not exist."
+  [ -f "$codex_auth_home/auth.json" ] && [ -r "$codex_auth_home/auth.json" ] || fail "Codex authentication file '$codex_auth_home/auth.json' is unavailable."
+  { [ ! -e "$codex_home" ] && [ ! -L "$codex_home" ]; } || fail "Codex home '$codex_home' already exists. Choose another name."
+  { [ ! -e "$worktree" ] && [ ! -L "$worktree" ]; } || fail "Worktree '$display_worktree' already exists. Choose another name."
   if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
     fail "Branch '$branch' already exists. Choose another name."
   fi
   return 0
+}
+
+create_codex_home() {
+  mkdir -p "$codex_home" || fail "Could not create Codex home '$codex_home'."
+  chmod 700 "$codex_home" || fail "Could not protect Codex home '$codex_home'."
+  cp "$codex_auth_home/auth.json" "$codex_home/auth.json" || fail "Could not copy Codex authentication file '$codex_auth_home/auth.json'."
+  chmod 600 "$codex_home/auth.json" || fail "Could not protect Codex authentication file '$codex_home/auth.json'."
 }
 
 create_worktree() {
@@ -69,7 +77,7 @@ create_manifest() {
 
   fleet_write_manifest "$manifest" "$agent" "$resource" "$repo" \
     "$git_common_dir" "$repo_id" "$resource" "$container" "$worktree" "$branch" \
-    || fail "Could not write agent manifest '$manifest'."
+    "$codex_home" || fail "Could not write agent manifest '$manifest'."
   manifest_written=1
 }
 
@@ -142,6 +150,8 @@ main() {
   print "Checking container runtime..."
   validate_environment
   create_manifest
+  print "Preparing isolated Codex home..."
+  create_codex_home
   print "Preparing worktree '$display_worktree'..."
   create_worktree
   print "Created branch: $branch."

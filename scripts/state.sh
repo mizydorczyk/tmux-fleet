@@ -40,7 +40,7 @@ fleet_write_manifest() {
     return 1
   fi
   if ! printf '%s\n' \
-    'version=1' \
+    'version=2' \
     "agent=$2" \
     "resource=$3" \
     "repo=$4" \
@@ -49,7 +49,8 @@ fleet_write_manifest() {
     "session=$7" \
     "container=$8" \
     "worktree=$9" \
-    "branch=${10}" > "$state_tmp"; then
+    "branch=${10}" \
+    "codex_home=${11}" > "$state_tmp"; then
     rm -f -- "$state_tmp"
     return 1
   fi
@@ -66,12 +67,14 @@ fleet_load_manifest() {
     return 1
   fi
   line_count=$(wc -l < "$state_file" | tr -d '[:space:]')
-  if [ "$line_count" != 10 ]; then
-    fleet_manifest_fail 'manifest must contain exactly ten fields'
-    return 1
-  fi
-
   fleet_version=$(sed -n '1s/^version=//p' "$state_file")
+  case "$fleet_version:$line_count" in
+    1:10|2:11) ;;
+    1:*) fleet_manifest_fail 'version 1 manifest must contain exactly ten fields'; return 1 ;;
+    2:*) fleet_manifest_fail 'version 2 manifest must contain exactly eleven fields'; return 1 ;;
+    *) fleet_manifest_fail 'manifest has an unsupported version'; return 1 ;;
+  esac
+
   fleet_agent=$(sed -n '2s/^agent=//p' "$state_file")
   fleet_resource=$(sed -n '3s/^resource=//p' "$state_file")
   fleet_repo=$(sed -n '4s/^repo=//p' "$state_file")
@@ -81,8 +84,12 @@ fleet_load_manifest() {
   fleet_container=$(sed -n '8s/^container=//p' "$state_file")
   fleet_worktree=$(sed -n '9s/^worktree=//p' "$state_file")
   fleet_branch=$(sed -n '10s/^branch=//p' "$state_file")
+  fleet_codex_home=
+  if [ "$fleet_version" = 2 ]; then
+    fleet_codex_home=$(sed -n '11s/^codex_home=//p' "$state_file")
+  fi
 
-  [ "$fleet_version" = 1 ] \
+  { [ "$fleet_version" = 1 ] || [ "$fleet_version" = 2 ]; } \
     && [ -n "$fleet_agent" ] \
     && [ -n "$fleet_resource" ] \
     && [ -n "$fleet_repo" ] \
@@ -92,6 +99,7 @@ fleet_load_manifest() {
     && [ -n "$fleet_container" ] \
     && [ -n "$fleet_worktree" ] \
     && [ -n "$fleet_branch" ] \
+    && { [ "$fleet_version" = 1 ] || [ -n "$fleet_codex_home" ]; } \
     || fleet_manifest_fail 'manifest has a missing or invalid field'
 }
 
@@ -107,6 +115,10 @@ fleet_validate_manifest() {
   fleet_expect "$fleet_container" "tmux-fleet-$fleet_resource" 'container does not match its resource' || return 1
   fleet_expect "$fleet_worktree" "$worktree_root/$fleet_resource" 'worktree is outside its worktree root' || return 1
   fleet_expect "$fleet_branch" "agent/$fleet_agent" 'branch does not match its agent' || return 1
+  if [ "$fleet_version" = 2 ]; then
+    fleet_expect "$fleet_codex_home" "$worktree_root/.codex/$fleet_resource" \
+      'Codex home is outside its worktree root' || return 1
+  fi
 
   case "$fleet_agent" in
     *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*|'')
@@ -185,6 +197,15 @@ fleet_cleanup_manifest() {
       return 1
       ;;
   esac
+
+  if [ "$fleet_version" = 2 ] \
+    && { [ -e "$fleet_codex_home" ] || [ -L "$fleet_codex_home" ]; }; then
+    print "Removing Codex home '$fleet_codex_home'..."
+    rm -rf -- "$fleet_codex_home" || {
+      print "Retained worktree and branch: Codex home removal failed."
+      return 1
+    }
+  fi
 
   worktree_list=$(git -C "$fleet_repo" worktree list --porcelain 2>/dev/null) || {
     print "Retained '$fleet_resource': could not list Git worktrees."

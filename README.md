@@ -26,7 +26,7 @@ set -g @plugin 'mizydorczyk/tmux-fleet'
 
 Reload tmux, then install the plugin using TPM's prefix + <kbd>I</kbd> shortcut.
 
-Log in to Codex on the host before launching an agent. The plugin mounts the host's `~/.codex` directory read/write so the container can refresh credentials and persist Codex session state.
+Log in to Codex on the host before launching an agent. The plugin creates a private, empty Codex home for each agent and copies only the host's `auth.json` into it. Everything else, including configuration, skills, plugins, session history, databases, caches, locks, and refreshed credentials, is created independently by that agent.
 
 ## Manage a fleet
 
@@ -39,7 +39,7 @@ tmux: fleet
 └── agent 2
 ```
 
-An agent is temporary, it's resources -- container, worktree, and branch -- are normally removed when their tmux session ends. To retry cleanup after a crash or host restart, run:
+An agent is temporary, its resources -- container, worktree, branch, and private Codex home -- are normally removed when their tmux session ends. To retry cleanup after a crash or host restart, run:
 
 ```sh
 scripts/cleanup.sh
@@ -58,4 +58,4 @@ set -g @tmux-fleet-codex-home '/Users/me/.codex'
 set -g @tmux-fleet-worktree-root '/Users/me/.tmux-fleet'
 ```
 
-The defaults are `A`, `runtime:latest`, `~/.codex`, and `~/.tmux-fleet`, respectively.
+The defaults are `A`, `runtime:latest`, `~/.codex`, and `~/.tmux-fleet`, respectively. `@tmux-fleet-codex-home` supplies only the host `auth.json`; changes made inside an agent do not propagate back to it.
