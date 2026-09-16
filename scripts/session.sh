@@ -121,9 +121,9 @@ run_container() {
     --workdir /workspace \
     "$image" /bin/bash -c '
       if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ]; then
-        print_prefix=$(printf "\033[90mtmux-agents >\033[0m")
+        print_prefix=$(printf "\033[90mtmux-fleet >\033[0m")
       else
-        print_prefix="tmux-agents >"
+        print_prefix="tmux-fleet >"
       fi
       codex
       codex_status=$?

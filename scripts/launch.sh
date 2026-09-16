@@ -66,17 +66,17 @@ resolve_repository() {
 }
 
 resolve_configuration() {
-  image=$(tmux_option '@tmux-agents-image')
+  image=$(tmux_option '@tmux-fleet-image')
   [ -n "$image" ] || image=runtime:latest
-  codex_home=$(tmux_option '@tmux-agents-codex-home')
+  codex_home=$(tmux_option '@tmux-fleet-codex-home')
   [ -n "$codex_home" ] || codex_home=${HOME}/.codex
-  worktree_root=$(tmux_option '@tmux-agents-worktree-root')
-  [ -n "$worktree_root" ] || worktree_root=${HOME}/.tmux-agents
+  worktree_root=$(tmux_option '@tmux-fleet-worktree-root')
+  [ -n "$worktree_root" ] || worktree_root=${HOME}/.tmux-fleet
 
   branch="agent/$agent_name"
   worktree="$worktree_root/$repo_name-$agent_name"
   tmux_session="$safe_repo_name-$agent_name"
-  container="tmux-agents-$safe_repo_name-$agent_name"
+  container="tmux-fleet-$safe_repo_name-$agent_name"
 }
 
 validate_session() {

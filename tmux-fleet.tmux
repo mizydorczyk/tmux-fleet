@@ -1,7 +1,7 @@
 #!/bin/sh
 
 CURRENT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-KEY=$(tmux show-option -gqv '@tmux-agents-key')
+KEY=$(tmux show-option -gqv '@tmux-fleet-key')
 
 [ -n "$KEY" ] || KEY=A
 
